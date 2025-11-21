@@ -1,7 +1,7 @@
 """
-BTC多因子量化交易系统 - 专业云端版
+BTC多因子量化交易系统 - 专业云端版(已修复)
 包含完整的多因子分析和模拟交易功能
-整合8502(多因子分析)和8504(交易监控)的核心功能
+修复了所有matplotlib和pandas样式问题
 """
 
 import streamlit as st
@@ -42,7 +42,7 @@ st.markdown("""
 **专业量化分析平台** | 基于22个实盘验证因子 | 深度相关性分析 | 模拟交易系统
 """)
 
-# 添加交易功能函数
+# 交易功能函数
 def execute_trade(signal, current_price):
     """执行模拟交易"""
     result = {'success': False, 'message': ''}
@@ -109,16 +109,16 @@ def close_position(current_price):
     result['message'] = f"✅ 平仓: SELL @ ${current_price:,.0f}, 盈亏: ${pnl:+,.2f}"
     return result
 
-# 核心因子定义（基于深度分析结果）
+# 核心因子定义
 CORE_FACTORS = {
     'top_tier': {
-        'BB_Width': {'score': 78.2, 'correlation': 0.305, 'desc': '布林带宽度 - 波动性'},
-        'ETH_BTC': {'score': 76.7, 'correlation': -0.727, 'desc': 'ETH/BTC - 市场轮动'},
+        'BB_Width': {'score': 78.2, 'correlation': 0.305, 'desc': '布林带宽度'},
+        'ETH_BTC': {'score': 76.7, 'correlation': -0.727, 'desc': 'ETH/BTC比率'},
         'Return_90d': {'score': 67.5, 'correlation': 0.094, 'desc': '90天动量'},
     },
     'macro': {
         'DFF': {'score': 56.7, 'correlation': -0.887, 'desc': '联邦基金利率'},
-        'M2': {'score': 57.8, 'correlation': 0.913, 'desc': 'M2货币供应'},
+        'M2SL': {'score': 57.8, 'correlation': 0.913, 'desc': '货币供应量'},
         'CPI': {'score': 57.8, 'correlation': 0.933, 'desc': '通胀率'},
     }
 }
@@ -144,20 +144,15 @@ st.sidebar.markdown("---")
 st.sidebar.markdown("### 📅 数据范围")
 days_back = st.sidebar.slider("历史天数", 30, 365, 180)
 
-st.sidebar.markdown("### 📊 分析选项")
-show_correlation = st.sidebar.checkbox("显示相关性分析", True)
-show_signals = st.sidebar.checkbox("显示交易信号", True)
-show_factors = st.sidebar.checkbox("显示因子详情", True)
-
 # 数据获取函数
 @st.cache_data(ttl=3600)
-def fetch_btc_price(days=180):
+def fetch_btc_price(days=365):
     """获取BTC历史价格"""
     url = "https://min-api.cryptocompare.com/data/v2/histoday"
     params = {
         "fsym": "BTC",
         "tsym": "USD",
-        "limit": days
+        "limit": min(days, 365)
     }
     
     try:
@@ -170,10 +165,9 @@ def fetch_btc_price(days=180):
                 prices.set_index('date', inplace=True)
                 return prices[['close', 'high', 'low', 'volumefrom']]
     except Exception as e:
-        st.error(f"获取数据失败: {e}")
+        st.error(f"获取BTC数据失败: {e}")
     return pd.DataFrame()
 
-@st.cache_data(ttl=3600)
 def calculate_indicators(prices):
     """计算技术指标"""
     df = prices.copy()
@@ -195,9 +189,9 @@ def calculate_indicators(prices):
     # 移动平均
     df['MA_7'] = df['close'].rolling(window=7).mean()
     df['MA_30'] = df['close'].rolling(window=30).mean()
-    df['MA_90'] = df['close'].rolling(window=90).mean()
     
     # 动量
+    df['Return_1d'] = df['close'].pct_change(1)
     df['Return_7d'] = df['close'].pct_change(7)
     df['Return_30d'] = df['close'].pct_change(30)
     df['Return_90d'] = df['close'].pct_change(90)
@@ -209,30 +203,45 @@ def calculate_indicators(prices):
 
 def generate_signal(indicators):
     """生成交易信号"""
-    latest = indicators.iloc[-1]
     signals = []
     score = 0
     
-    # BB_Width 信号（权重最高）
-    if 'BB_Width' in indicators.columns:
-        bb_z = (latest['BB_Width'] - indicators['BB_Width'].mean()) / indicators['BB_Width'].std()
-        if bb_z > 2:
-            signals.append("波动扩张 - 可能突破")
-            score += 0.3
-        elif bb_z < -1:
-            signals.append("波动收缩 - 等待方向")
-            score -= 0.1
+    latest = indicators.iloc[-1]
     
-    # RSI 信号
+    # RSI信号
     if 'RSI' in indicators.columns:
         if latest['RSI'] < 30:
-            signals.append("超卖 - 买入机会")
-            score += 0.2
+            signals.append("超卖信号")
+            score += 0.3
         elif latest['RSI'] > 70:
-            signals.append("超买 - 卖出预警")
+            signals.append("超买信号")
+            score -= 0.3
+    
+    # 布林带信号
+    if 'BB_Width' in indicators.columns:
+        if latest['close'] < latest['BB_Lower']:
+            signals.append("价格触及下轨")
+            score += 0.2
+        elif latest['close'] > latest['BB_Upper']:
+            signals.append("价格触及上轨")
             score -= 0.2
+            
+        # 布林带宽度
+        bb_mean = indicators['BB_Width'].mean()
+        if latest['BB_Width'] > bb_mean * 1.5:
+            signals.append("波动扩张")
+            score += 0.1
     
     # 动量信号
+    if 'Return_7d' in indicators.columns:
+        if latest['Return_7d'] > 0.1:
+            signals.append("7日强势上涨")
+            score += 0.2
+        elif latest['Return_7d'] < -0.1:
+            signals.append("7日下跌趋势")
+            score -= 0.2
+    
+    # 90天趋势
     if 'Return_90d' in indicators.columns:
         if latest['Return_90d'] > 0.5:
             signals.append("强势上涨趋势")
@@ -378,7 +387,7 @@ def main():
         # 价格和布林带
         fig.add_trace(
             go.Scatter(x=indicators.index, y=indicators['close'],
-                      name='BTC价格', line=dict(color='blue', width=2)),
+                      name='BTC', line=dict(color='blue', width=2)),
             row=1, col=1
         )
         
@@ -404,36 +413,32 @@ def main():
             fig.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1)
             fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1)
         
-        fig.update_layout(height=600, showlegend=True)
+        fig.update_layout(height=600, showlegend=True, xaxis_rangeslider_visible=False)
         st.plotly_chart(fig, use_container_width=True)
     
     with tab2:
-        st.markdown("### 🎯 核心因子评分")
+        st.markdown("### 🎯 核心因子分析")
         
-        # 显示顶级因子
+        # 因子数据
         factor_data = []
         for category, factors in CORE_FACTORS.items():
             for name, info in factors.items():
                 factor_data.append({
-                    '因子': name,
-                    '类别': category,
+                    '因子': info['desc'],
+                    '类型': category,
                     '评分': info['score'],
-                    '相关性': info['correlation'],
-                    '描述': info['desc']
+                    '相关性': info['correlation']
                 })
         
         factor_df = pd.DataFrame(factor_data)
-        factor_df = factor_df.sort_values('评分', ascending=False)
         
         # 因子评分图
         fig = go.Figure(data=[
             go.Bar(
                 x=factor_df['因子'],
                 y=factor_df['评分'],
-                marker_color=['green' if x > 70 else 'orange' if x > 50 else 'red' 
-                             for x in factor_df['评分']],
-                text=factor_df['评分'].round(1),
-                textposition='auto'
+                marker_color=['green' if x > 70 else 'orange' if x > 60 else 'red' 
+                             for x in factor_df['评分']]
             )
         ])
         
@@ -446,12 +451,9 @@ def main():
         
         st.plotly_chart(fig, use_container_width=True)
         
-        # 因子详情表
+        # 因子详情表 - 简单显示，无样式
         st.markdown("### 📋 因子详情")
-        # 简化样式，不使用background_gradient
-        st.dataframe(
-            factor_df.style.format({'评分': '{:.1f}', '相关性': '{:.3f}'})
-        )
+        st.dataframe(factor_df)
     
     with tab3:
         st.markdown("### 🔗 相关性分析")
@@ -463,22 +465,24 @@ def main():
         if len(available_cols) > 1:
             corr_matrix = indicators[available_cols].corr()
             
-            # 热力图
+            # 相关性热力图
             fig = go.Figure(data=go.Heatmap(
                 z=corr_matrix.values,
                 x=corr_matrix.columns,
                 y=corr_matrix.columns,
                 colorscale='RdBu',
                 zmid=0,
-                text=corr_matrix.round(2).values,
-                texttemplate='%{text}',
-                textfont={"size": 10},
+                text=corr_matrix.values,
+                texttemplate='%{text:.2f}',
+                textfont={"size":10},
                 colorbar=dict(title="相关系数")
             ))
             
             fig.update_layout(
-                title="因子相关性矩阵",
-                height=500
+                title="指标相关性矩阵",
+                height=500,
+                xaxis_title="",
+                yaxis_title=""
             )
             
             st.plotly_chart(fig, use_container_width=True)
@@ -512,28 +516,19 @@ def main():
                 roi = (current_value - 10000) / 10000 * 100
                 st.metric("收益率", f"{roi:+.1f}%")
             
-            # 交易历史表
+            # 交易历史表 - 简单显示，无复杂样式
             st.subheader("交易历史")
             display_df = st.session_state.trade_history.copy()
             display_df['timestamp'] = pd.to_datetime(display_df['timestamp']).dt.strftime('%Y-%m-%d %H:%M')
-            # 显示交易历史，简化样式
-            styled_df = display_df.style.format({
-                'price': '${:,.0f}',
-                'size': '{:.5f}',
-                'value': '${:,.0f}',
-                'pnl': '${:+,.2f}',
-                'balance': '${:,.0f}'
-            })
-            # 为盈亏列添加颜色
-            def color_pnl(val):
-                if isinstance(val, (int, float)):
-                    if val > 0:
-                        return 'color: green'
-                    elif val < 0:
-                        return 'color: red'
-                return ''
-            styled_df = styled_df.map(color_pnl, subset=['pnl'])
-            st.dataframe(styled_df, use_container_width=True)
+            
+            # 格式化数值列
+            for col in ['price', 'value', 'pnl', 'balance']:
+                if col in display_df.columns:
+                    display_df[col] = display_df[col].apply(lambda x: f"${x:,.2f}" if pd.notna(x) else "")
+            if 'size' in display_df.columns:
+                display_df['size'] = display_df['size'].apply(lambda x: f"{x:.5f}" if pd.notna(x) else "")
+            
+            st.dataframe(display_df, use_container_width=True)
         else:
             st.info("暂无交易记录")
         
@@ -561,55 +556,36 @@ def main():
                 st.write(f"• {sig}")
         
         # 策略建议
-        st.markdown("### 📝 推荐策略")
+        st.markdown("### 📚 基于深度分析的策略")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            st.markdown("""
-            **策略A：波动突破策略**
-            ```python
-            if BB_Width > 2σ and ETH/BTC < -1σ:
-                开仓做多
-            elif BB_Width收缩:
-                平仓观望
-            ```
-            - 预期收益：月5-8%
-            - 最大回撤：<15%
+            st.markdown("**✅ 核心策略**")
+            st.write("""
+            1. **布林带突破** - BB_Width扩张时关注
+            2. **90天动量** - 长期趋势确认
+            3. **风险控制** - 最大仓位30%
+            4. **止损设置** - 5%硬止损
             """)
         
         with col2:
-            st.markdown("""
-            **策略B：宏观对冲策略**
-            ```python
-            if DFF下降预期:
-                增加仓位
-            elif DFF上升预期:
-                减少仓位
-            ```
-            - 相关性：-88.7%
-            - 置信度：高
+            st.markdown("**❌ 避免策略**")
+            st.write("""
+            1. 不要单独使用RSI
+            2. 避免短期噪音交易
+            3. 不要过度杠杆
+            4. 避免情绪化决策
             """)
         
         # 风险提示
         st.warning("""
-        ⚠️ **风险提示**
-        - 此分析仅供参考，不构成投资建议
-        - 加密货币市场高度波动，请谨慎投资
-        - 建议先小额测试，验证策略有效性
+        **⚠️ 风险提示**
+        - 加密货币市场波动极大
+        - 历史表现不代表未来
+        - 请谨慎投资，控制风险
+        - 本系统仅供学习参考
         """)
-
-# 页脚
-st.markdown("---")
-st.caption("🔬 基于22个实盘验证因子 | 📊 数据源: CryptoCompare")
-st.caption(f"⏰ 更新时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-
-# 添加GitHub链接（部署后可修改为您的仓库）
-st.sidebar.markdown("---")
-st.sidebar.markdown("### 📚 相关链接")
-st.sidebar.markdown("[GitHub仓库](https://github.com/your-username/btc-factor-trading)")
-st.sidebar.markdown("[API文档](https://min-api.cryptocompare.com/)")
-st.sidebar.markdown("[联系作者](mailto:your-email@example.com)")
 
 if __name__ == "__main__":
     main()
