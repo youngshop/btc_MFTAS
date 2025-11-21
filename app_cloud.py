@@ -448,8 +448,9 @@ def main():
         
         # 因子详情表
         st.markdown("### 📋 因子详情")
+        # 简化样式，不使用background_gradient
         st.dataframe(
-            factor_df.style.background_gradient(subset=['评分'], cmap='RdYlGn')
+            factor_df.style.format({'评分': '{:.1f}', '相关性': '{:.3f}'})
         )
     
     with tab3:
@@ -515,20 +516,24 @@ def main():
             st.subheader("交易历史")
             display_df = st.session_state.trade_history.copy()
             display_df['timestamp'] = pd.to_datetime(display_df['timestamp']).dt.strftime('%Y-%m-%d %H:%M')
-            st.dataframe(
-                display_df.style.format({
-                    'price': '${:,.0f}',
-                    'size': '{:.5f}',
-                    'value': '${:,.0f}',
-                    'pnl': '${:+,.2f}',
-                    'balance': '${:,.0f}'
-                }).applymap(
-                    lambda x: 'color: green' if isinstance(x, (int, float)) and x > 0 else 
-                    ('color: red' if isinstance(x, (int, float)) and x < 0 else ''),
-                    subset=['pnl']
-                ),
-                use_container_width=True
-            )
+            # 显示交易历史，简化样式
+            styled_df = display_df.style.format({
+                'price': '${:,.0f}',
+                'size': '{:.5f}',
+                'value': '${:,.0f}',
+                'pnl': '${:+,.2f}',
+                'balance': '${:,.0f}'
+            })
+            # 为盈亏列添加颜色
+            def color_pnl(val):
+                if isinstance(val, (int, float)):
+                    if val > 0:
+                        return 'color: green'
+                    elif val < 0:
+                        return 'color: red'
+                return ''
+            styled_df = styled_df.map(color_pnl, subset=['pnl'])
+            st.dataframe(styled_df, use_container_width=True)
         else:
             st.info("暂无交易记录")
         
