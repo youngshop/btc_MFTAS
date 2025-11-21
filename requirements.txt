@@ -1,6 +1,6 @@
-# Streamlit Cloud 精简依赖
-streamlit==1.28.1
-pandas==2.0.3
-numpy==1.24.3
-plotly==5.17.0
-requests==2.31.0
+# Streamlit Cloud Dependencies - Python 3.13+ Compatible
+streamlit>=1.28.0
+pandas>=2.1.0
+numpy>=1.26.0
+plotly>=5.17.0
+requests>=2.31.0
